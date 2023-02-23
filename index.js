@@ -23,11 +23,10 @@ function verifyJWT(req, res, next) {
     console.log("access token inside jwt", req.headers.authorization);
     const authHeader = req.headers.authorization;
     if (!authHeader) {
-        res.status(401).send("unauthorized access");
+        return res.status(401).send("unauthorized access");
     }
 
     const token = authHeader.split(' ')[1];
-    // const token = authHeader[1];
 
     jwt.verify(token, process.env.ACCESS_TOKEN, function (err, decoded) {
         if (err) {
@@ -37,6 +36,7 @@ function verifyJWT(req, res, next) {
         next();
     })
 }
+
 
 
 async function run() {
@@ -49,6 +49,24 @@ async function run() {
 
         // users Collection 
         const usersCollection = client.db("cctvShop").collection("users");
+
+        // technicians Collection
+        const techniciansCollection = client.db("cctvShop").collection("technicians");
+
+
+        // verifyAdmin after verifyJWT
+        const verifyAdmin = async (req, res, next) => {
+            console.log("inside verifyAdmin", req.decoded.email);
+            const decodedEmail = req.decoded.email;
+            const query = {email : decodedEmail};
+            const user = await usersCollection.findOne(query);
+
+            if(user?.role !== "admin"){
+                return res.status(403).send({message: "forbidden access"})
+            }
+            next()
+        }
+
 
 
         // load the services data from the database
@@ -95,6 +113,14 @@ async function run() {
             res.send(result);
         });
 
+        // payment 
+        app.get("/servicesBooking/:id", async (req, res) => {
+            const id = req.params.id;
+            const query = {_id : ObjectId(id)};
+            const booking = await bookingsCollection.findOne(query);
+            res.send(booking);
+        })
+
 
         // generate JWT when sign up
         app.get("/jwt", async (req, res) => {
@@ -136,14 +162,8 @@ async function run() {
 
         // update role in database 
 
-        app.put("/users/admin/:id", verifyJWT, async (req, res) => {
-            const decodedEmail = req.decoded.email;
-            const query = { email: decodedEmail };
-            const user = await usersCollection.findOne(query);
-            if (user?.role !== "admin") {
-                return res.status(403).send({ message: "forbidden access" })
-            }
-
+        app.put("/users/admin/:id", verifyJWT, verifyAdmin, async (req, res) => {
+          
             const id = req.params.id;
             const filter = { _id: ObjectId(id) };
             const options = { upsert: true };
@@ -154,8 +174,51 @@ async function run() {
             }
             const result = await usersCollection.updateOne(filter, updatedDoc, options);
             res.send(result);
+        });
+
+        // temporary to update price field on service options
+        // app.get("/addPrice", async (req, res) => {
+        //     const filter = {};
+        //     const options = {upsert: true};
+        //     const updatedDoc = {
+        //         $set: {
+        //             price: 99
+        //         }
+        //     };
+        //     const result = await servicesCollection.updateMany(filter, updatedDoc, options);
+        //     res.send(result);
+        // })
+
+        // get only the services name from the database
+
+        app.get("/serviceSpecialty", async (req, res) => {
+            const query = {};
+            const result = await servicesCollection.find(query).project({ serviceName: 1 }).toArray();
+            res.send(result);
+        });
+
+        // get all the technicians
+        app.get("/technicians", async (req, res) => {
+            const query = {};
+            const technicians = await techniciansCollection.find(query).toArray();
+            res.send(technicians)
         })
 
+
+        // post technicians detail to the database
+        app.post("/technician", verifyJWT, verifyAdmin, async (req, res) => {
+            const technician = req.body;
+            const result = await techniciansCollection.insertOne(technician);
+            res.send(result);
+        })
+
+        // delete technicians
+        app.delete("/technicians/:id", verifyJWT, async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: ObjectId(id) };
+            const result = await techniciansCollection.deleteOne(filter);
+            res.send(result)
+        })
 
     }
 
