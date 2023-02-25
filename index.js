@@ -3,6 +3,9 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
+
+
 const port = process.env.PORT || 5001;
 
 const app = express();
@@ -52,17 +55,21 @@ async function run() {
 
         // technicians Collection
         const techniciansCollection = client.db("cctvShop").collection("technicians");
+        
+        
+        // payments Collection
+        const paymentsCollection = client.db("cctvShop").collection("payments");
 
 
         // verifyAdmin after verifyJWT
         const verifyAdmin = async (req, res, next) => {
             console.log("inside verifyAdmin", req.decoded.email);
             const decodedEmail = req.decoded.email;
-            const query = {email : decodedEmail};
+            const query = { email: decodedEmail };
             const user = await usersCollection.findOne(query);
 
-            if(user?.role !== "admin"){
-                return res.status(403).send({message: "forbidden access"})
+            if (user?.role !== "admin") {
+                return res.status(403).send({ message: "forbidden access" })
             }
             next()
         }
@@ -113,14 +120,50 @@ async function run() {
             res.send(result);
         });
 
-        // payment 
+        // payment request
         app.get("/servicesBooking/:id", async (req, res) => {
             const id = req.params.id;
-            const query = {_id : ObjectId(id)};
+            const query = { _id: ObjectId(id) };
             const booking = await bookingsCollection.findOne(query);
             res.send(booking);
         })
 
+        // payment gateway
+
+        app.post("/create-payment-intent", async (req, res) => {
+            const serviceBooking = req.body;
+            const price = serviceBooking.price;
+            const amount = price * 100;
+
+            const paymentIntent = await stripe.paymentIntents.create({
+                currency: "usd",
+                amount: amount,
+                "payment_method_types": [
+                    "card"
+                ]
+
+            });
+
+            res.send({
+                clientSecret: paymentIntent.client_secret,
+            });
+        });
+
+        // payment save to the database
+        app.post("/payments", async (req, res) => {
+            const payment = req.body;
+            const result = await paymentCollection.insertOne(payment);
+            const id = payment.bookingId
+            const filter = {_id : ObjectId(id)}
+            const updatedDoc = {
+                $set: {
+                    paid: true,
+                    transactionId: payment.transactionId
+                }
+            }
+            const updateResult = await bookingsCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        })
 
         // generate JWT when sign up
         app.get("/jwt", async (req, res) => {
@@ -163,7 +206,7 @@ async function run() {
         // update role in database 
 
         app.put("/users/admin/:id", verifyJWT, verifyAdmin, async (req, res) => {
-          
+
             const id = req.params.id;
             const filter = { _id: ObjectId(id) };
             const options = { upsert: true };
